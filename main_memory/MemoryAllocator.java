@@ -57,6 +57,8 @@ public class MemoryAllocator{
                 ProcessSize = GenerateProcessSize();
             }
         }
+
+        InputScanner.close();
     }
 
     void FirstFit(){
