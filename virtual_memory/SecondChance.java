@@ -2,182 +2,191 @@ package virtual_memory;
 
 import java.util.ArrayList;
 
+/**
+ * Implementation of the Second Chance (Clock) page replacement algorithm.
+ * This algorithm gives each page a "second chance" by using a reference bit.
+ * When a page fault occurs and memory is full, pages are inspected in circular order:
+ *   - If the reference bit is 0, the page is replaced.
+ *   - If the reference bit is 1, the bit is cleared and the page is skipped (given a second chance).
+ */
 public class SecondChance {
+
+    // 'hand' acts as the clock hand, pointing to the next frame to inspect for replacement
+    private static int hand = 0;
+
     public static void main(String[] args) {
-        
-        int[] referenceString = {2, 1, 4, 0}; // Example reference string
-        int numberOfPages = referenceString.length;       // Number of pages in memory
-        int numberOfFrames = 4;      // Number of frames available
-        
+        // Example reference string: sequence of page accesses
+        int[] referenceString = {2, 1, 4, 0};
+        // Total number of page references to process
+        int numberOfPages = referenceString.length;
+        // Number of frames (slots) available in memory
+        int numberOfFrames = 4;
+
+        // Print simulation header information
         System.out.println("\n\n**** Second Chance Algorithm ***");
         System.out.println("Number of pages: " + numberOfPages);
         System.out.println("Number of frames: " + numberOfFrames);
         System.out.print("Reference string: ");
-        for (int i = 0; i < referenceString.length; i++) {
-            System.out.print(referenceString[i] + " ");
+        for (int page : referenceString) {
+            System.out.print(page + " ");
         }
-
         System.out.println("\n");
 
         System.out.println("**** Simulation ***");
+        // Start the Second Chance simulation
         run(numberOfPages, numberOfFrames, referenceString);
     }
 
-    /*
-     * Run the Second Chance algorithm simulation
+    /**
+     * Runs the Second Chance page replacement simulation.
+     *
+     * @param numberOfPages   total references in the string
+     * @param numberOfFrames  capacity of the frame buffer
+     * @param referenceString array of page numbers to access
      */
     public static void run(int numberOfPages, int numberOfFrames, int[] referenceString) {
-        // State storage
+        // pageStates[t][f] stores the state (pageNumber, refBit) of frame f at time t
         Page[][] pageStates = new Page[numberOfFrames][referenceString.length + 1];
+        // pageFaults[t] = true if a fault occurred when processing reference index t-1
         boolean[] pageFaults = new boolean[referenceString.length + 1];
 
-        // Initialize the page queue
+        // Initialize frames with dummy pages and record initial state
         ArrayList<Frame> frameList = new ArrayList<>(numberOfFrames);
         populateFrames(frameList, numberOfFrames, pageStates);
 
-        // Print Headers
+        // Print the table headers
         printHeader(referenceString);
         printSeparator(numberOfFrames, referenceString.length);
 
-        // Process reference string
+        // Process each page request in the reference string
         for (int time = 1; time <= referenceString.length; time++) {
-            // Check the next required reference string
-            int pageNumber = referenceString[time - 1];
+            int pageNumber = referenceString[time - 1]; // current page to access
             boolean pageFound = false;
-            
-            // Check if page is already in memory
+
+            // Check if the page is already loaded in one of the frames
             for (Frame frame : frameList) {
                 Page currentPage = frame.getPage();
-                if (currentPage.getPageNumber() == pageNumber) {
+                if (currentPage != null && currentPage.getPageNumber() == pageNumber) {
+                    // Hit: set reference bit to 1 to mark recent use
+                    currentPage.setReferenceBit(true);
                     pageFound = true;
-                    currentPage.setReferenceBit(true); // Set reference bit to 1
                     break;
                 }
             }
 
-            // If the reference string is not contained in the pageQueue, we need to handle a page fault
+            // Miss: page fault occurs, need to replace a page
             if (!pageFound) {
                 pageFaults[time - 1] = true;
-                handlePageFault(frameList, pageNumber, numberOfFrames);
+                handlePageFault(frameList, pageNumber);
             }
 
-            // Store the state of the pageQueue after this time step
+            // Record the snapshot of all frames after this time step
             for (int i = 0; i < numberOfFrames; i++) {
                 pageStates[i][time] = frameList.get(i).getPage().clone();
             }
         }
 
-        // Print the table
+        // After processing all references, print the full simulation table
         printTable(pageStates, numberOfFrames, referenceString, pageFaults);
     }
 
-
-    /*
-     * Handle a page fault by replacing a page using the Second Chance algorithm
+    /**
+     * Handles a page fault using the Second Chance (Clock) replacement policy.
+     *
+     * @param frames  list of frames representing memory slots
+     * @param newPage the page number to load into a frame
      */
-    public static void handlePageFault(ArrayList<Frame> frameList, int newPageNumber, int numberOfFrames) {
-        boolean replaced = false;
-        
-        for (int i = 0; i < numberOfFrames && !replaced; i++) {
-            // Get the current frame and its page
-            Frame currentFrame = frameList.get(i);
-            Page currentPage = currentFrame.getPage();
-            
-            if (!currentPage.isReferenceBit()) {
-                // This page has a second chance bit of 0, so replace it
-                Page newPage = new Page(newPageNumber);
-                newPage.setReferenceBit(true); // Set reference bit for newly loaded page
-                swapPage(currentPage, newPageNumber);
-                replaced = true;
-            } else {
-                // Give this page a second chance
-                currentPage.setReferenceBit(false);
+    private static void handlePageFault(ArrayList<Frame> frames, int newPage) {
+        while (true) {
+            Page candidate = frames.get(hand).getPage();
+
+            if (!candidate.isReferenceBit()) {
+                // If reference bit == 0, evict this page and load the new one
+                frames.get(hand).setPage(new Page(newPage, true)); // new page starts with refBit=1
+                // Advance the hand to the next frame (clockwise)
+                hand = (hand + 1) % frames.size();
+                return;
             }
-        }
-        
-        // If no page was replaced (all had reference bit = 1),
-        // replace the first page (which now has reference bit = 0)
-        if (!replaced) {
-            swapPage(frameList.get(0).getPage(), newPageNumber);
+            // If reference bit == 1, clear it (second chance) and advance
+            candidate.setReferenceBit(false);
+            hand = (hand + 1) % frames.size();
         }
     }
 
-
-    /*
-     * Swap page for the new page
-     */
-    private static void swapPage(Page page, int newPageNumber) {
-        page.setPageNumber(newPageNumber);
-        page.setReferenceBit(true); // Set reference bit for newly loaded page
-    }
-
-    
-    /*
-     * Populate the page queue with empty frames
+    /**
+     * Initializes the list of frames with dummy pages and sets up initial pageStates.
+     *
+     * @param pageList      container to hold Frame objects
+     * @param numberOfFrames total frames to create
+     * @param pageStates    snapshot array to populate initial state
      */
     private static void populateFrames(ArrayList<Frame> pageList, int numberOfFrames, Page[][] pageStates) {
         for (int i = 0; i < numberOfFrames; i++) {
-            Page newPage = new Page(i); // Create a new page
-            Frame newFrame = new Frame(i); // Create a new frame
-            newFrame.setPage(newPage); // Set the page in the frame
+            // Create a dummy page (pageNumber=i, refBit defaults to false)
+            Page newPage = new Page(i);
+            Frame newFrame = new Frame(i);
+            newFrame.setPage(newPage);
 
-            pageList.add(newFrame); // Initialize empty frames
+            pageList.add(newFrame);
+            // Clone and store the initial state at time 0
             pageStates[i][0] = newPage.clone();
         }
     }
 
-
-    /*
-     * Print the header for the simulation
+    /**
+     * Prints the table header showing time steps and reference string values.
      */
     private static void printHeader(int[] referenceString) {
-        // Print time header
         System.out.printf("%-9s | ", "Time");
         for (int i = 0; i <= referenceString.length; i++) {
-            System.out.printf("  %-4s | ", i); // Space for frame columns
+            System.out.printf("  %-4s | ", i);
         }
-        System.out.printf("\n");
+        System.out.println();
 
-        // Print reference string header
         System.out.printf("%-9s | ", "RS");
         for (int i = 0; i <= referenceString.length; i++) {
-            if (i == 0) System.out.printf("  %-4s | ", "");
-            else System.out.printf("  %-4s | ", referenceString[i - 1]); 
+            if (i == 0)
+                System.out.printf("  %-4s | ", "");
+            else
+                System.out.printf("  %-4s | ", referenceString[i - 1]);
         }
-        System.out.printf("%-6s%n", "");
+        System.out.println();
     }
 
-
-    /*
-     * Print the table showing the state of the pages in memory
+    /**
+     * Prints the simulation table of frame contents and reference bits,
+     * followed by the page fault markers.
      */
     private static void printTable(Page[][] pageStates, int numberOfFrames, int[] referenceString, boolean[] pageFaults) {
+        // Print each frame's history over time
         for (int frameNumber = 0; frameNumber < pageStates.length; frameNumber++) {
             System.out.printf("%-9s | ", "Frame " + frameNumber);
             for (int i = 0; i < referenceString.length + 1; i++) {
                 Page page = pageStates[frameNumber][i];
-                System.out.printf("%-6s | ", "" + page.getPageNumber() + " : " + (page.isReferenceBit() ? "1" : "0"));
+                System.out.printf("%-6s | ", page.getPageNumber() + " : " + (page.isReferenceBit() ? "1" : "0"));
             }
-            System.out.printf("%n");
+            System.out.println();
         }
 
-        // Print separator
+        // Separator line before fault summary
         printSeparator(numberOfFrames, referenceString.length);
 
-        // Print page fault summary
+        // Print where page faults occurred ('*')
         System.out.printf("%-7s | ", "Pg faults");
         for (int i = 0; i < referenceString.length + 1; i++) {
-            if (i == 0) System.out.printf("%-6s | ", "");
-            else System.out.printf("  %-4s | ", pageFaults[i - 1] ? "*" : "");
+            if (i == 0)
+                System.out.printf("%-6s | ", "");
+            else
+                System.out.printf("  %-4s | ", pageFaults[i - 1] ? "*" : "");
         }
-        System.out.println("\n\n");
+        System.out.println("\n");
     }
 
-
-    /*
-     * Print a separator line for the table
+    /**
+     * Prints a separator line based on table dimensions for formatting.
      */
     private static void printSeparator(int numberOfFrames, int referenceStringLength) {
+        // Calculate total width: base + per-column widths
         System.out.println("-".repeat(7 + 6 * referenceStringLength + 10 + 3 * (referenceStringLength + 1)));
     }
 }
